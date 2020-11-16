@@ -1,0 +1,63 @@
+###########
+# BUILDER #
+###########
+
+FROM python:3.8.3-alpine as builder
+
+WORKDIR /usr/src/app
+
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+RUN pip install --upgrade pip
+RUN apk update && apk add gcc postgresql-dev dos2unix musl-dev libc-dev make git libffi-dev openssl-dev python3-dev \
+    libxml2-dev libxslt-dev zlib-dev jpeg-dev \
+&& pip3 install --upgrade --no-cache-dir pip setuptools==49.6.0 \
+&& pip install psycopg2-binary==2.8.6
+
+RUN pip install --upgrade pip
+RUN pip install flake8
+COPY . .
+#RUN flake8 --ignore=E501,F401,W503,F405,F403 .
+
+COPY ./chaos/requirements/common.txt ./common.txt
+COPY ./chaos/requirements/prod.txt ./requirements.txt
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /usr/src/app/wheels -r requirements.txt
+
+
+#########
+# FINAL #
+#########
+
+FROM python:3.8.3-alpine
+
+RUN mkdir -p /home/app
+
+RUN addgroup -S app && adduser -S app -G app
+
+ENV HOME=/home/app
+ENV APP_HOME=/home/app/web
+
+RUN mkdir $APP_HOME
+RUN mkdir $APP_HOME/static
+RUN mkdir $APP_HOME/media
+
+WORKDIR $APP_HOME
+
+RUN apk update && apk add libpq
+COPY --from=builder /usr/src/app/wheels /wheels
+COPY --from=builder /usr/src/app/common.txt .
+COPY --from=builder /usr/src/app/requirements.txt .
+RUN pip install --no-cache /wheels/*
+
+COPY ./entrypoint.prod.sh $APP_HOME
+
+COPY . $APP_HOME
+
+RUN chown -R app:app $APP_HOME
+
+USER app
+
+RUN chmod +x $APP_HOME/entrypoint.prod.sh
+
+ENTRYPOINT ["/home/app/web/entrypoint.prod.sh"]
